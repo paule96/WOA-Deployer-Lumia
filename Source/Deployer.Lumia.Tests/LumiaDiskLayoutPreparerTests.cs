@@ -1,7 +1,6 @@
 ﻿using System.Threading.Tasks;
 using ByteSizeLib;
 using Deployer.Lumia.NetFx;
-using Deployer.Lumia.NetFx.PhoneInfo;
 using Deployer.NetFx;
 using Xunit;
 
@@ -9,7 +8,7 @@ namespace Deployer.Lumia.Tests
 {
     public class LumiaDiskLayoutPreparerTests
     {
-        [Fact]
+        [Fact(Skip = "Don't run this")]
         [Trait("Category", "Real")]
         public async Task Prepare()
         {

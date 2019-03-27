@@ -5,14 +5,12 @@ using System.Threading.Tasks;
 using Deployer.FileSystem;
 using Deployer.FileSystem.Gpt;
 using Serilog;
-using Zafiro.Core;
 using Partition = Deployer.FileSystem.Partition;
 
 namespace Deployer.Lumia
 {
     public class PartitionCleaner : IPartitionCleaner
     {
-        private IPhone phone;
         private Partition dataPartition;
         private Disk disk;
 
@@ -20,25 +18,21 @@ namespace Deployer.Lumia
         {
             Log.Information("Performing partition cleanup");
 
-            phone = toClean;
-
             disk = await toClean.GetDeviceDisk();
-            var dataVolume = await phone.GetDataVolume();
-            dataPartition = dataVolume?.Partition;
+            dataPartition = await disk.GetPartitionByVolumeLabel(VolumeName.Data);
 
-
-            PerformPartitionCleanupByName();
-            await RemoveAnyPartitionsAfterData();
-
-            Log.Verbose("Refreshing disk");
-
+            RemoveAnyPartitionsAfterData();
             await EnsureDataIsLastPartition();
 
+            Log.Information("Cleanup done");
+
+            Log.Verbose("Refreshing disk");
             await disk.Refresh();
         }
 
         private async Task EnsureDataIsLastPartition()
         {
+            Log.Verbose("Ensuring that Data partition is the last partition");
             using (var c = new GptContext(disk.Number, FileAccess.Read))
             {
                 var last = c.Partitions.Last();
@@ -51,51 +45,35 @@ namespace Deployer.Lumia
             }
         }
 
-        private void PerformPartitionCleanupByName()
+        private void RemoveAnyPartitionsAfterData()
         {
-            Log.Verbose("Removing existing partitions by name");
+            Log.Verbose("Removing all the partitions after the Data partition");
 
-            using (var c = new GptContext(disk.Number, FileAccess.ReadWrite))
-            {
-                c.RemoveExisting(PartitionName.System);
-                c.RemoveExisting(PartitionName.Reserved);
-                c.RemoveExisting(PartitionName.Windows);
-            }
-        }
 
-        private async Task RemoveAnyPartitionsAfterData()
-        {
             if (dataPartition == null)
             {
                 Log.Verbose("Data partition not found. The removal of partitions after Data won't be performed");
                 return;
             }
 
-            Log.Verbose("Trying to remove partitions created by previous versions of WOA Deployer");
-
-            var partNumber = (int)dataPartition.Number;
-            var partitions = await disk.GetPartitions();
-
-            var toRemove = partitions
-                .Skip(partNumber)
-                .ToList();
-
-            Log.Verbose("Removing legacy partitions");
-            foreach (var partition in toRemove)
+            using (var c = new GptContext(disk.Number, FileAccess.ReadWrite))
             {
-                await partition.Remove();
-            }
+                var toRemove = GetPartitionsAfterData(c);
 
-            await EnsurePartitionsAreRemoved(toRemove);
+                foreach (var partition in toRemove)
+                {
+                    c.Delete(partition);
+                }
+            }
         }
 
-        private async Task EnsurePartitionsAreRemoved(ICollection<Partition> toRemove)
+        private IEnumerable<FileSystem.Gpt.Partition> GetPartitionsAfterData(GptContext c)
         {
-            var existing = await disk.GetPartitions();
-            if (toRemove.IsSubsetOf(existing))
-            {
-                throw new PartitioningException("Couldn't remove all the partitions during the cleanup.");
-            }
+            var indexOfData = c.IndexOf(c.Find(dataPartition.Guid));
+            var toRemove = c.Partitions
+                .Skip(indexOfData + 1)
+                .ToList();
+            return toRemove;
         }
     }
 }
